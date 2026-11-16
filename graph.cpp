@@ -6,11 +6,11 @@
 
 using namespace std;
 
-Graph::Graph() {
+Graph::Graph() {                // Default constructor: initializes the graph with zero locations.
     totalLocations = 0;
 }
 
-Graph::Graph(int totalLocations) {
+Graph::Graph(int totalLocations) {                
     this->totalLocations = totalLocations;
     adjacencyList.resize(totalLocations);
 }
@@ -107,7 +107,7 @@ void Graph::displayGraph() const {
 }
 
 
-vector<vector<int>> Graph::getRoadList() const {
+vector<vector<int>> Graph::getRoadList() const { 
     vector<vector<int>> roads;
 
     for (int i = 0; i < totalLocations; i++) {
