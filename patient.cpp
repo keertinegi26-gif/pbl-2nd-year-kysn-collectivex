@@ -59,3 +59,4 @@ void Patient::display() const {
          << " | Location: " << locationId
          << " | Priority: " << priority << "\n";
 
+}
