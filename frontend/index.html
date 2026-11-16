@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ResQroute</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c2230; --muted:#667085; --line:#d0d5dd;
+          --crit:#d92d20; --serious:#f79009; --normal:#12b76a; --pick:#f79009; --drop:#12b76a; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10131a; --card:#1a1f2b; --text:#e8ebf2; --muted:#98a2b3; --line:#344054; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:12px 16px; font-weight:700; font-size:18px; border-bottom:1px solid var(--line); }
+  header span { color:var(--muted); font-weight:400; font-size:13px; margin-left:8px; }
+  main { display:grid; grid-template-columns: minmax(0,1.4fr) minmax(280px,1fr); gap:12px; padding:12px; }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; }
+  h3 { margin:0 0 8px; font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  svg { width:100%; height:auto; display:block; }
+  input, select, button { font:inherit; padding:8px; border-radius:8px; border:1px solid var(--line);
+                          background:var(--card); color:var(--text); }
+  button { cursor:pointer; background:var(--accent); color:#fff; border:none; font-weight:600; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button.small { padding:4px 10px; font-size:13px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+  .row > * { flex:1 1 110px; min-width:0; }
+  .item { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0;
+          border-bottom:1px solid var(--line); font-size:14px; }
+  .item:last-child { border-bottom:none; }
+  .badge { color:#fff; border-radius:999px; padding:1px 8px; font-size:12px; font-weight:600; }
+  .Critical { background:var(--crit); } .Serious { background:var(--serious); } .Normal { background:var(--normal); }
+  .muted { color:var(--muted); font-size:13px; }
+  #msg { min-height:20px; font-size:14px; margin-bottom:8px; }
+  #msg.err { color:var(--crit); } #msg.ok { color:var(--normal); }
+  details summary { cursor:pointer; font-weight:600; margin-bottom:8px; }
+  .legend span { margin-right:12px; font-size:13px; }
+</style>
+</head>
+<body>
+<header>🚑 ResQroute <span>Ambulance allocation &amp; route optimization</span></header>
+<main>
+  <section>
+    <div class="card">
+      <svg id="map" viewBox="0 0 600 600" role="img" aria-label="Road network map"></svg>
+      <div class="legend muted">
+        <span style="color:var(--pick)">▬ to patient</span>
+        <span style="color:var(--drop)">▬ to hospital</span>
+        <span>🚑 ambulance</span><span>🏥 hospital</span><span>📍 patient</span>
+      </div>
+    </div>
+    <div class="card" id="planCard" style="display:none"><h3>Last dispatch</h3><div id="plan"></div></div>
+  </section>
+
+  <section>
+    <div id="msg"></div>
+
+    <div class="card">
+      <h3>New emergency</h3>
+      <div class="row">
+        <input id="pName" placeholder="Patient name">
+        <select id="pLoc"></select>
+      </div>
+      <div class="row">
+        <select id="pSev">
+          <option value="1">Critical</option><option value="2">Serious</option><option value="3" selected>Normal</option>
+        </select>
+        <select id="pHosp"></select>
+      </div>
+      <div class="row">
+        <button onclick="addPatient()">Add request</button>
+        <button onclick="dispatchNext()" style="background:var(--crit)">Dispatch next</button>
+      </div>
+    </div>
+
+    <div class="card"><h3>Pending (most urgent first)</h3><div id="pending"></div></div>
+    <div class="card"><h3>Ambulances</h3><div id="ambulances"></div></div>
+    <div class="card"><h3>Hospitals</h3><div id="hospitals"></div></div>
+
+    <div class="card">
+      <details>
+        <summary>Setup: roads, ambulances, hospitals</summary>
+        <div class="row">
+          <select id="rFrom"></select><select id="rTo"></select>
+          <input id="rDist" type="number" min="1" placeholder="km">
+          <button class="small" onclick="addRoad()">Add road</button>
+        </div>
+        <div class="row">
+          <input id="aDriver" placeholder="Driver name"><select id="aLoc"></select>
+          <button class="small" onclick="addAmbulance()">Add ambulance</button>
+        </div>
+        <div class="row">
+          <input id="hName" placeholder="Hospital name"><select id="hLoc"></select>
+          <button class="small" onclick="addHospital()">Add hospital</button>
+        </div>
+      </details>
+      <div class="row">
+        <button class="ghost" onclick="act('/api/demo')">Load demo data</button>
+        <button class="ghost" onclick="resetAll()">Reset</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const API = '';          // same server. If the page is hosted elsewhere use 'http://localhost:8000'
+const SEV = { 1: 'Critical', 2: 'Serious', 3: 'Normal' };
+const SEV_COLOR = { 1: 'var(--crit)', 2: 'var(--serious)', 3: 'var(--normal)' };
+let state = null;
+let trips = {};          // ambulanceId -> dispatch plan (routes stay drawn until trip is completed)
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function call(path, body) {
+  const res = await fetch(API + path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  return res.json();
+}
+
+function say(text, ok) {
+  const m = $('msg');
+  m.textContent = text;
+  m.className = ok ? 'ok' : 'err';
+}
+
+async function act(path, body) {
+  try {
+    const r = await call(path, body === undefined ? {} : body);
+    say(r.message, r.ok);
+    await refresh();
+    return r;
+  } catch (e) {
+    say('Cannot reach the server. Is server.py running?', false);
+  }
+}
+
+async function refresh() {
+  state = await call('/api/state');
+  // forget routes of ambulances that are free again
+  for (const id of Object.keys(trips)) {
+    const a = state.ambulances.find(x => x.id == id);
+    if (!a || a.available) delete trips[id];
+  }
+  fillSelects();
+  render();
+}
+
+/* ---------- actions ---------- */
+async function addPatient() {
+  const name = $('pName').value.trim();
+  if (!name) return say('Enter the patient name.', false);
+  const r = await act('/api/patient', {
+    name, location: +$('pLoc').value, priority: +$('pSev').value, hospitalId: +$('pHosp').value });
+  if (r && r.ok) $('pName').value = '';
+}
+
+async function dispatchNext() {
+  const r = await act('/api/dispatch');
+  if (r && r.ok) {
+    trips[r.plan.ambulanceId] = r.plan;
+    showPlan(r.plan);
+    render();
+  }
+}
+
+const complete = id => { $('planCard').style.display = 'none'; act('/api/complete', { ambulanceId: id }); };
+const addRoad = () => act('/api/road', { from: +$('rFrom').value, to: +$('rTo').value, distance: +$('rDist').value });
+const addAmbulance = () => {
+  const ids = state.ambulances.map(a => a.id);
+  act('/api/ambulance', { id: Math.max(0, ...ids) + 1, driver: $('aDriver').value, location: +$('aLoc').value, available: true });
+};
+const addHospital = () => {
+  const ids = state.hospitals.map(h => h.id);
+  act('/api/hospital', { id: Math.max(0, ...ids) + 1, name: $('hName').value, location: +$('hLoc').value });
+};
+async function resetAll() { trips = {}; $('planCard').style.display = 'none'; await act('/api/reset'); }
+
+/* ---------- rendering ---------- */
+function fillSelects() {
+  const nodes = [...Array(state.nodes).keys()];
+  const opts = nodes.map(n => `<option value="${n}">Node ${n}</option>`).join('');
+  for (const id of ['pLoc', 'rFrom', 'rTo', 'aLoc', 'hLoc']) {
+    const el = $(id), old = el.value;
+    el.innerHTML = opts;
+    if (old) el.value = old;
+  }
+  const hp = $('pHosp'), old = hp.value;
+  hp.innerHTML = '<option value="0">Nearest hospital</option>' +
+    state.hospitals.map(h => `<option value="${h.id}">${esc(h.name)}</option>`).join('');
+  if (old) hp.value = old;
+}
+
+function pos(n) {
+  const a = (2 * Math.PI * n) / state.nodes - Math.PI / 2;
+  return [300 + 225 * Math.cos(a), 300 + 225 * Math.sin(a)];
+}
+
+function render() {
+  drawMap();
+
+  $('pending').innerHTML = state.pending.length ? state.pending.map(p => `
+    <div class="item"><span><span class="badge ${p.severity}">${p.severity}</span>
+      ${esc(p.name)} <span class="muted">node ${p.location}</span></span></div>`).join('')
+    : '<span class="muted">No pending requests.</span>';
+
+  $('ambulances').innerHTML = state.ambulances.length ? state.ambulances.map(a => `
+    <div class="item"><span>🚑 #${a.id} ${esc(a.driver)} <span class="muted">node ${a.location} ·
+      ${a.available ? 'available' : 'busy → node ' + a.dropLocation}</span></span>
+      ${a.available ? '' : `<button class="small" onclick="complete(${a.id})">Complete trip</button>`}</div>`).join('')
+    : '<span class="muted">No ambulances.</span>';
+
+  $('hospitals').innerHTML = state.hospitals.length ? state.hospitals.map(h => `
+    <div class="item"><span>🏥 ${esc(h.name)} <span class="muted">node ${h.location}</span></span></div>`).join('')
+    : '<span class="muted">No hospitals.</span>';
+}
+
+function showPlan(p) {
+  $('planCard').style.display = 'block';
+  $('plan').innerHTML = `
+    <div class="item"><span><span class="badge ${p.severity}">${p.severity}</span> ${esc(p.patient)}</span>
+      <span>Ambulance #${p.ambulanceId}</span></div>
+    <div class="item"><span>To patient</span><span>${p.pickupPath.join(' → ')} · ${p.pickupDistance} km</span></div>
+    <div class="item"><span>To ${esc(p.hospitalName)}</span><span>${p.dropPath.join(' → ')} · ${p.dropDistance} km</span></div>
+    <div class="item"><strong>Total</strong><strong>${p.totalDistance} km · ~${p.etaMinutes.toFixed(1)} min</strong></div>
+    ${p.hospitalOverridden ? '<div class="muted">Requested hospital unreachable, nearest used.</div>' : ''}`;
+}
+
+function drawMap() {
+  let s = '';
+  // roads
+  for (const [a, b, w] of state.roads) {
+    const [x1, y1] = pos(a), [x2, y2] = pos(b);
+    s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--line)" stroke-width="3"/>`;
+    s += `<text x="${(x1+x2)/2}" y="${(y1+y2)/2}" font-size="13" fill="var(--muted)" text-anchor="middle"
+          paint-order="stroke" stroke="var(--card)" stroke-width="4">${w}</text>`;
+  }
+  // active routes
+  const line = (path, color) => {
+    if (path.length < 2) return '';
+    return `<polyline fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"
+      stroke-opacity=".85" points="${path.map(n => pos(n).join(',')).join(' ')}"/>`;
+  };
+  for (const t of Object.values(trips)) s += line(t.pickupPath, 'var(--pick)') + line(t.dropPath, 'var(--drop)');
+
+  // nodes
+  const icons = {};                       // node -> list of icons so they do not overlap
+  const put = (n, t) => (icons[n] = icons[n] || []).push(t);
+  state.hospitals.forEach(h => put(h.location, '🏥'));
+  state.ambulances.forEach(a => put(a.location, '🚑'));
+  state.pending.forEach(p => put(p.location, '📍'));
+  Object.values(trips).forEach(t => put(t.pickupPath[t.pickupPath.length - 1], '📍'));
+
+  for (let n = 0; n < state.nodes; n++) {
+    const [x, y] = pos(n);
+    s += `<circle cx="${x}" cy="${y}" r="17" fill="var(--card)" stroke="var(--muted)" stroke-width="2"/>`;
+    s += `<text x="${x}" y="${y + 5}" font-size="14" text-anchor="middle" fill="var(--text)">${n}</text>`;
+    (icons[n] || []).forEach((ic, i) => {
+      s += `<text x="${x + 22 + i * 20}" y="${y - 14}" font-size="20">${ic}</text>`;
+    });
+  }
+  $('map').innerHTML = s;
+}
+
+refresh().catch(() => say('Cannot reach the server. Is server.py running?', false));
+</script>
+</body>
+</html>
