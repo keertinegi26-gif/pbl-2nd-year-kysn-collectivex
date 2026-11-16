@@ -14,4 +14,5 @@ public:
     static void printMessage(const string& message);
 };
 
-#endif
+#endif
+//end
