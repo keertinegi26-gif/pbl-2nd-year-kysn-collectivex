@@ -20,7 +20,7 @@ public:
 
     vector<int> dijkstra(int source, vector<int>& parent);
     void displayGraph() const;
-    vector<vector<int>> getRoadList() const;   // each road once: {from, to, distance}
+    vector<vector<int>> getRoadList() const;   // each road once: [from, to, distance]
 };
 
-#endif
+#endif 
